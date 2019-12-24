@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 from lxml import etree
 import re, copy, sys
 
@@ -104,9 +104,14 @@ class Clip:
     def filter_out(self):
         return self
     def to_str(self):
-        for x in LetClips:
-            if x[0] == [self.pos, self.part]:
-                return x[1].to_str()
+        global LetClips
+        for i in range(len(LetClips)):
+            if LetClips[i][0] == [self.pos, self.part]:
+                x = LetClips[i]
+                LetClips[i] = [None, None]
+                ret = x[1].to_str()
+                LetClips[i] = x
+                return ret
         if self.pos == 'list' or self.pos == 'lit':
             if '.' in self.part or ' ' in self.part:
                 return '"' + self.part + '"'
@@ -134,13 +139,13 @@ class Cond:
         if self.op == 'not':
             return indent('(', 'not', self.children[0].to_str(), ')')
         elif self.op in ['and', 'or']:
-            ls = [self.children[0]]
+            ls = [self.children[0].to_str()]
             for i in self.children[1:]:
                 ls.append(self.op)
-                ls.append(i)
+                ls.append(i.to_str())
             return indent('(', *ls, ')')
         else:
-            return('(', self.children[0], self.op, self.children[1], ')')
+            return indent('(', self.children[0].to_str(), self.op, self.children[1].to_str(), ')')
 
 class Choose:
     def __init__(self, test, do, otherwise):
@@ -287,13 +292,20 @@ class Action:
         elif self.name == 'out':
             return indent('[', *[x.to_str() for x in self.parts], ']')
         elif self.name == 'lu':
+            frame = '*(something)'
             ls = []
             for l in self.parts:
                 if isinstance(l, Clip) and l.pos.isalnum():
-                    ls.append(l.part + '=' + l.to_str() + ',')
+                    if l.part == 'whole':
+                        frame = l.pos
+                    else:
+                        ls.append(l.part + '=' + l.to_str() + ',')
                 else:
                     ls.append('something=' + l.to_str() + ',')
-            return indent('*(something)[', *ls, ']')
+            if ls:
+                return indent(frame + '[', *ls, ']')
+            else:
+                return frame
         else:
             return ''
 
@@ -302,6 +314,8 @@ def parse_action(xml, adjust=None):
         return ActionBlock([parse_action(x, adjust) for x in xml])
     elif xml.tag in 'and|or|not|equal|begins-with|begins-with-list|ends-with|ends-with-list|contains-substring|in'.split('|'):
         return Cond(xml.tag, [parse_action(x, adjust) for x in xml])
+    elif xml.tag == 'list':
+        return Clip('list', xml.attrib['n'])
     elif xml.tag == 'choose':
         ls = [parse_action(x, adjust) for x in xml]
         if ls[-1][0] == 'otherwise':
@@ -464,9 +478,8 @@ class Rule:
         self.act = act
         self.line = line
     def to_str(self):
+        print('to_str(%s)' % self.line)
         maybe_type = self.act.filter(['0', 'pos_tag'])
-        print(maybe_type)
-        print(maybe_type.parts)
         if isinstance(maybe_type, Clip) and maybe_type.pos == 'lit':
             pos = maybe_type.part
         else:
@@ -525,16 +538,23 @@ if len(sys.argv) < 3 or len(sys.argv) > 4:
     print('usage: trx_to_rtx.py t1x [t2x] rtx')
 else:
     t1x = etree.parse(sys.argv[1], parser=etree.ETCompatXMLParser()).getroot()
+    print('process t1x')
     rls1 = process_file(t1x, 't1x')
+    print('done with t1x')
     t2x = None
     rls2 = []
     if len(sys.argv) == 4:
+        print('process t2x')
         t2x = etree.parse(sys.argv[2], parser=etree.ETCompatXMLParser()).getroot()
         rls2 = process_file(t2x, 't2x')
+        print('done with t2x')
     rtx = sys.argv[-1]
     r0s = []
+    print('t1x')
     r1s = [r.to_str() for r in rls1]
+    print('t2x')
     r2s = [r.to_str() for r in rls2]
+    print('generating pattern rules')
     for k in OutputTags:
         for c in Cats[k]:
             r0s.append('%s -> %s {1};\n' % (k, c.to_str()))
